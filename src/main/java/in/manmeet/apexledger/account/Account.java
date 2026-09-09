@@ -1,5 +1,6 @@
 package in.manmeet.apexledger.account;
 
+import in.manmeet.apexledger.api.ApiException;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -65,5 +66,25 @@ public class Account {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public void requireOpenCustomer() {
+        if (kind != AccountKind.CUSTOMER) {
+            throw ApiException.unprocessable("ACCOUNT_NOT_ELIGIBLE", "Only CUSTOMER accounts can participate in transfers");
+        }
+        if (status != AccountStatus.OPEN) {
+            throw ApiException.unprocessable("ACCOUNT_NOT_OPEN", "Account " + id + " is not OPEN");
+        }
+    }
+
+    public void debit(long amountMinor) {
+        if (availableBalanceMinor < amountMinor) {
+            throw ApiException.unprocessable("INSUFFICIENT_FUNDS", "Source account has insufficient balance");
+        }
+        availableBalanceMinor -= amountMinor;
+    }
+
+    public void credit(long amountMinor) {
+        availableBalanceMinor += amountMinor;
     }
 }

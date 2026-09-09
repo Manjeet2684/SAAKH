@@ -4,7 +4,7 @@
 
 SAAKH is a distributed financial transaction and reconciliation platform built to preserve consistency and trust under retries, duplicate requests, partial failures, and asynchronous service communication.
 
-**Phase 1 (current):** foundation only — schema, seed data, application boot, API-key gate, read-only account lookup.
+**Phase 2 (current):** core transfer engine — atomic posting, idempotency, row locking, transactional outbox persistence.
 
 It is not a bank, not UPI, not a Razorpay clone, and not an authentication product.
 
@@ -16,9 +16,28 @@ It is not a bank, not UPI, not a Razorpay clone, and not an authentication produ
 - Deterministic demo wallets
 - `GET /v1/accounts/{id}` behind `X-API-Key`
 
+## Phase 2 — Transfer engine
+
+`POST /api/v1/transfers` moves INR paise between OPEN CUSTOMER accounts.
+
+Send `X-API-Key: local-dev-key` and header `Idempotency-Key`. Body: `sourceAccountId`, `destinationAccountId`, `amountMinor`, `currency`.
+
+- **Atomic transactions:** debit, credit, transfer row, two ledger lines, and an unpublished outbox event commit together or roll back together.
+- **Idempotency:** `Idempotency-Key` is unique in Postgres. The same key and request returns the original `COMPLETED` result. The same key with different transfer details returns `409`.
+- **Concurrency:** both accounts are locked with `SELECT FOR UPDATE` in `id` order (`PESSIMISTIC_WRITE`) so concurrent postings cannot corrupt balances or deadlock A→B vs B→A.
+- **Transactional outbox:** a successful transfer inserts `TRANSFER_COMPLETED` with `published_at` null in the same database transaction. There is no Kafka publisher in this phase.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/transfers \
+  -H "X-API-Key: local-dev-key" \
+  -H "Idempotency-Key: demo-alice-bob-1" \
+  -H "Content-Type: application/json" \
+  -d "{\"sourceAccountId\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\",\"destinationAccountId\":\"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\",\"amountMinor\":1000,\"currency\":\"INR\"}"
+```
+
 ## What is not implemented yet
 
-Transfers, locking, idempotency logic, outbox publisher, Kafka producer/consumer, reconciliation, and fault injection. Those are later phases.
+Outbox publisher, Kafka producer/consumer, reconciliation, reversals, and fault injection. Those are later phases.
 
 ## Demo accounts
 
@@ -65,7 +84,7 @@ Verify seed data:
 curl -H "X-API-Key: local-dev-key" http://localhost:8080/v1/accounts/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
 ```
 
-Local keys (not secrets): `local-dev-key` for `/v1/**`, `local-internal-key` for `/internal/**`.
+Local keys (not secrets): `local-dev-key` for `/v1/**` and `/api/**`, `local-internal-key` for `/internal/**`.
 
 ## Tests
 
@@ -73,17 +92,17 @@ Local keys (not secrets): `local-dev-key` for `/v1/**`, `local-internal-key` for
 ./mvnw test
 ```
 
-`MoneyTest` always runs. `FoundationSchemaTest` uses Testcontainers Postgres and is skipped if Docker is not available (`disabledWithoutDocker`).
+`MoneyTest` and `RequestFingerprintTest` always run. `FoundationSchemaTest` and `TransferApiTest` use Testcontainers Postgres and are skipped if Docker is not available (`disabledWithoutDocker`).
 
 ## SYSTEM GUARANTEES (target; not all enforced in Phase 1)
 
 | Guarantee | Mechanism |
 |---|---|
-| Duplicate request does not move money twice | Durable Postgres idempotency (Phase 3) |
-| Balance does not go negative | Transaction + row locking (Phase 2) |
+| Duplicate request does not move money twice | Durable Postgres idempotency (Phase 2) |
+| Balance does not go negative | Transaction + `SELECT FOR UPDATE` (Phase 2) |
 | Every posted transfer is balanced | Double-entry ledger lines (Phase 2) |
 | Ledger history is immutable | Append-only `ledger_lines` |
-| DB commit does not silently lose events | Transactional outbox (Phase 4) |
+| DB commit does not silently lose events | Outbox row in the posting transaction (Phase 2 persist; Phase 4 publish) |
 | Duplicate event does not duplicate side effect | `notifications.event_id` UNIQUE (Phase 4) |
 | Balance drift is detectable | Detect-only reconciliation (Phase 5) |
 

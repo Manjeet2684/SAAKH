@@ -13,7 +13,7 @@ import java.util.UUID;
 
 /**
  * Read-only account lookup so Phase 1 seed data can be verified.
- * Transfer posting is Phase 2.
+ * Transfer posting is Phase 2 (`POST /api/v1/transfers`).
  */
 @RestController
 @RequestMapping("/v1/accounts")

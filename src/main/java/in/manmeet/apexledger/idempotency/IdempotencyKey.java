@@ -1,5 +1,6 @@
 package in.manmeet.apexledger.idempotency;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -26,7 +27,7 @@ public class IdempotencyKey {
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "response_body", columnDefinition = "jsonb")
-    private String responseBody;
+    private JsonNode responseBody;
 
     @Column(name = "transfer_id")
     private UUID transferId;
@@ -35,6 +36,24 @@ public class IdempotencyKey {
     private Instant createdAt;
 
     protected IdempotencyKey() {}
+
+    public static IdempotencyKey completed(
+            String key,
+            String requestHash,
+            int httpStatus,
+            JsonNode responseBody,
+            UUID transferId,
+            Instant at
+    ) {
+        IdempotencyKey row = new IdempotencyKey();
+        row.idempotencyKey = key;
+        row.requestHash = requestHash;
+        row.httpStatus = httpStatus;
+        row.responseBody = responseBody;
+        row.transferId = transferId;
+        row.createdAt = at;
+        return row;
+    }
 
     public String getIdempotencyKey() {
         return idempotencyKey;
@@ -48,7 +67,7 @@ public class IdempotencyKey {
         return httpStatus;
     }
 
-    public String getResponseBody() {
+    public JsonNode getResponseBody() {
         return responseBody;
     }
 

@@ -1,5 +1,6 @@
 package in.manmeet.apexledger.outbox;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -14,6 +15,8 @@ import java.util.UUID;
 @Table(name = "outbox_events")
 public class OutboxEvent {
 
+    public static final String TRANSFER_COMPLETED = "TRANSFER_COMPLETED";
+
     @Id
     @Column(name = "event_id")
     private UUID eventId;
@@ -26,7 +29,7 @@ public class OutboxEvent {
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(nullable = false, columnDefinition = "jsonb")
-    private String payload;
+    private JsonNode payload;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
@@ -35,6 +38,17 @@ public class OutboxEvent {
     private Instant publishedAt;
 
     protected OutboxEvent() {}
+
+    public static OutboxEvent unpublished(UUID eventId, String eventType, UUID aggregateId, JsonNode payload, Instant at) {
+        OutboxEvent event = new OutboxEvent();
+        event.eventId = eventId;
+        event.eventType = eventType;
+        event.aggregateId = aggregateId;
+        event.payload = payload;
+        event.createdAt = at;
+        event.publishedAt = null;
+        return event;
+    }
 
     public UUID getEventId() {
         return eventId;
@@ -48,7 +62,7 @@ public class OutboxEvent {
         return aggregateId;
     }
 
-    public String getPayload() {
+    public JsonNode getPayload() {
         return payload;
     }
 

@@ -35,6 +35,23 @@ public class LedgerLine {
 
     protected LedgerLine() {}
 
+    public static LedgerLine of(
+            UUID transferId,
+            UUID accountId,
+            LedgerDirection direction,
+            long amountMinor,
+            Instant at
+    ) {
+        LedgerLine line = new LedgerLine();
+        line.id = UUID.randomUUID();
+        line.transferId = transferId;
+        line.accountId = accountId;
+        line.direction = direction;
+        line.amountMinor = amountMinor;
+        line.createdAt = at;
+        return line;
+    }
+
     public UUID getId() {
         return id;
     }

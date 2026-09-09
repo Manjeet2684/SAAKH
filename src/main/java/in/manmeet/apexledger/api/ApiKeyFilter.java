@@ -28,7 +28,9 @@ public class ApiKeyFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
-        return !path.startsWith("/v1/") && !path.startsWith("/internal/");
+        return !path.startsWith("/v1/")
+                && !path.startsWith("/api/")
+                && !path.startsWith("/internal/");
     }
 
     @Override
