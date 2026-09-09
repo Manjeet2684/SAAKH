@@ -1,0 +1,26 @@
+spring:
+  application:
+    name: saakh
+  datasource:
+    url: jdbc:postgresql://localhost:5433/apexledger
+    username: apexledger
+    password: apexledger
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: 8080
+
+saakh:
+  security:
+    api-key: local-dev-key
+    internal-api-key: local-internal-key
