@@ -1,0 +1,16 @@
+.git
+.github
+target
+.idea
+*.iml
+.vscode
+.settings
+.project
+.classpath
+*.log
+.env
+.DS_Store
+Thumbs.db
+*.md
+.dockerignore
+Dockerfile

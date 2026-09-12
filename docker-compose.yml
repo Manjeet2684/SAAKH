@@ -41,5 +41,22 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_NUM_PARTITIONS: 1
 
+  app:
+    build: .
+    image: saakh:local
+    container_name: saakh-app
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/apexledger
+      SPRING_DATASOURCE_USERNAME: apexledger
+      SPRING_DATASOURCE_PASSWORD: apexledger
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      SAAKH_SECURITY_API_KEY: local-dev-key
+      SAAKH_SECURITY_INTERNAL_API_KEY: local-internal-key
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   saakh_postgres:

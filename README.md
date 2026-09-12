@@ -6,7 +6,7 @@ SAAKH is a correctness-focused financial transaction and reconciliation backend.
 
 It is built to preserve consistency under retries, duplicate requests, partial failures, and asynchronous event publication.
 
-**Phase 5 (current):** observability, diagnostics, and baseline API-key hardening on top of the Phase 1–4 correctness model. Kafka publishing is unchanged from Phase 3.
+**Phase 6 (current):** CI and containerized local run on top of the Phase 1–5 correctness model. This is not CI/CD and not production payments infrastructure.
 
 It is not a bank, not UPI, not a Razorpay clone, and not an authentication product.
 
@@ -112,7 +112,17 @@ V2 also inserts already-published seed outbox rows. Those historical rows use ev
 
 ## Run locally
 
-Requires Java 21, Docker, and the Maven wrapper.
+Two supported modes. Both use the same Compose Postgres and Kafka. Do not mix host and container addresses.
+
+| | Host JVM | Application container |
+|---|---|---|
+| PostgreSQL | `localhost:5433` | `postgres:5432` |
+| Kafka | `localhost:9092` | `kafka:19092` |
+| Application | `localhost:8080` | `localhost:8080` |
+
+### Mode 1 — Host JVM
+
+Needs Java 21, Docker, and the Maven wrapper. Compose starts only Postgres and Kafka.
 
 ```bash
 docker compose up -d postgres kafka
@@ -126,9 +136,21 @@ docker compose up -d postgres kafka
 .\mvnw.cmd spring-boot:run
 ```
 
+`application.yml` already points at the host addresses above.
+
+### Mode 2 — Full containerized stack
+
+Needs Docker only. Compose builds the application image and starts Postgres, Kafka, and the app.
+
+```bash
+docker compose up --build
+```
+
+The app container overrides datasource and Kafka bootstrap to the **container** addresses. Do not use `localhost:5433` or `localhost:9092` from inside the app container.
+
 Postgres is published on **host port 5433** (container 5432) so it does not collide with a local Windows PostgreSQL on 5432.
 
-The Compose database name and user remain `apexledger` (internal identifier). The Postgres container is named `saakh-postgres`. Kafka is `saakh-kafka` on host port **9092**.
+The Compose database name and user remain `apexledger` (internal identifier). The Postgres container is named `saakh-postgres`. Kafka is `saakh-kafka` on host port **9092**. The application container is `saakh-app` on host port **8080**.
 
 Verify seed data:
 
@@ -136,15 +158,19 @@ Verify seed data:
 curl -H "X-API-Key: local-dev-key" http://localhost:8080/v1/accounts/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
 ```
 
-Local keys (not secrets): `local-dev-key` for `/v1/**` and `/api/**`, `local-internal-key` for `/internal/**`.
+Local/demo keys (not a secret-management platform): `local-dev-key` for `/v1/**` and `/api/**`, `local-internal-key` for `/internal/**`. Override with `SAAKH_SECURITY_API_KEY` and `SAAKH_SECURITY_INTERNAL_API_KEY`.
 
 ## Tests
+
+Docker is required for the Testcontainers-backed suite. Unit tests still run without it; most API/outbox tests skip if Docker is unavailable.
 
 ```bash
 ./mvnw test
 ```
 
 `MoneyTest`, `RequestFingerprintTest`, `SettlementFingerprintTest`, and `ApiKeyEqualsTest` always run. `FoundationSchemaTest`, `TransferApiTest`, and Phase 4–5 API tests use Testcontainers Postgres and disable the outbox poller (no Kafka). `OutboxPublisherTest` uses Testcontainers Postgres and Kafka.
+
+GitHub Actions (`.github/workflows/ci.yml`) on Ubuntu runs `./mvnw -B test` and then `docker build -t saakh:ci .`. It does not push an image and is not a cloud deployment.
 
 ## Phase 5 — Observability and baseline security
 
@@ -159,9 +185,20 @@ Phase 5 does not move money and does not change TX A, TX B, the Kafka event sche
 
 Phase 5 deliberately does **not** include Prometheus, Grafana, ELK, OpenTelemetry, OAuth, RBAC, Vault, Redis, Kubernetes, or a Kafka consumer.
 
+## Phase 6 — CI and containerized local run
+
+Phase 6 does not move money and does not change TX A, TX B, the Kafka event schema, detect-only reconciliation, or Phase 5 observability/security.
+
+- **CI:** one GitHub Actions workflow checks out the repo, uses Java 21 and the Maven wrapper, runs the full test suite (Testcontainers execute because the Ubuntu runner has Docker), then builds `saakh:ci` locally. There is no image push and no CD.
+- **Image:** multi-stage Dockerfile packages with `./mvnw -B -DskipTests package` and runs the Spring Boot jar as a non-root user on Eclipse Temurin 21 JRE.
+- **Compose:** `docker compose up --build` starts PostgreSQL, Kafka, and the application. The app waits for Postgres to be healthy (Flyway/Hibernate need it). Kafka is started but is not a required healthy dependency and does not control application readiness.
+- **Config:** container addresses are environment variables in Compose. Host-JVM defaults in `application.yml` stay valid. No Docker Spring profile and no Vault.
+
+Phase 6 deliberately does **not** include Kubernetes, cloud deployment, a container registry, Prometheus, or a Kafka consumer.
+
 ## Implemented guarantees
 
-These are implemented in the current Phase 1–5 codebase. They are not future targets. Phase 5 did not change this financial correctness model.
+These are implemented in the current Phase 1–6 codebase. They are not future targets. Phase 6 did not change this financial correctness model.
 
 | Guarantee | Mechanism |
 |---|---|
@@ -183,3 +220,5 @@ Not implemented: consumer-side deduplication of a republished `eventId`. The V1 
 - Not globally distributed
 - Not production-ready for unlimited scale
 - Not an enterprise IAM, monitoring, or distributed-tracing platform
+- Not a cloud deployment or Kubernetes system
+- Not CI/CD: CI verifies the repo; nothing is deployed

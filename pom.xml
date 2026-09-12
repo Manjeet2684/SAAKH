@@ -15,7 +15,7 @@
     <artifactId>apexledger</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <name>SAAKH</name>
-    <description>SAAKH is a distributed financial transaction and reconciliation platform built to preserve consistency and trust under retries, duplicate requests, partial failures, and asynchronous service communication.</description>
+    <description>SAAKH is a correctness-focused financial transaction and reconciliation backend. It is a Spring Boot monolith: PostgreSQL is the financial source of truth, and Kafka is used only for transactional-outbox publishing.</description>
 
     <properties>
         <java.version>21</java.version>
