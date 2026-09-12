@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -134,7 +135,7 @@ public class TransferService {
                 eventId,
                 OutboxEvent.TRANSFER_COMPLETED,
                 transferId,
-                objectMapper.valueToTree(outboxPayload(eventId, body)),
+                objectMapper.valueToTree(outboxPayload(eventId, body, now)),
                 now
         ));
 
@@ -199,19 +200,21 @@ public class TransferService {
         );
     }
 
-    private static Map<String, Object> outboxPayload(UUID eventId, TransferResponse body) {
-        return Map.of(
-                "eventId", eventId.toString(),
-                "eventType", OutboxEvent.TRANSFER_COMPLETED,
-                "aggregateType", "TRANSFER",
-                "aggregateId", body.transferId().toString(),
-                "transferId", body.transferId().toString(),
-                "sourceAccountId", body.sourceAccountId().toString(),
-                "destinationAccountId", body.destinationAccountId().toString(),
-                "amountMinor", body.amountMinor(),
-                "currency", body.currency(),
-                "status", body.status()
-        );
+    private static Map<String, Object> outboxPayload(UUID eventId, TransferResponse body, Instant at) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("eventId", eventId.toString());
+        payload.put("eventType", OutboxEvent.TRANSFER_COMPLETED);
+        payload.put("aggregateType", "TRANSFER");
+        payload.put("aggregateId", body.transferId().toString());
+        payload.put("transferId", body.transferId().toString());
+        payload.put("sourceAccountId", body.sourceAccountId().toString());
+        payload.put("destinationAccountId", body.destinationAccountId().toString());
+        payload.put("amountMinor", body.amountMinor());
+        payload.put("currency", body.currency());
+        payload.put("status", body.status());
+        payload.put("occurredAt", at.toString());
+        payload.put("schemaVersion", 1);
+        return payload;
     }
 
     private static boolean isUniqueViolation(Throwable ex) {

@@ -17,8 +17,8 @@ services:
       timeout: 5s
       retries: 10
 
-  # Broker is provisioned now so Phase 4 does not change local infra.
-  # The application does not connect to Kafka in Phase 1.
+  # Broker is used in Phase 3 by the outbox publisher. The posting transaction
+  # still does not talk to Kafka. Start with: docker compose up -d postgres kafka
   kafka:
     image: apache/kafka:3.8.1
     container_name: saakh-kafka
