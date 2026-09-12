@@ -2,13 +2,15 @@
 
 **Trust Through Every Transaction.**
 
-SAAKH is a distributed financial transaction and reconciliation platform built to preserve consistency and trust under retries, duplicate requests, partial failures, and asynchronous service communication.
+SAAKH is a correctness-focused financial transaction and reconciliation backend. The current implementation is a Spring Boot monolith: PostgreSQL is the financial source of truth, and Kafka is used only for transactional outbox publishing after a transfer commits. It is not a microservices system.
 
-**Phase 3 (current):** transactional outbox publisher — unpublished events are copied to Kafka with at-least-once delivery.
+It is built to preserve consistency under retries, duplicate requests, partial failures, and asynchronous event publication.
+
+**Phase 4 (current):** detect-only financial integrity and simulated settlement reconciliation. Kafka publishing is unchanged from Phase 3.
 
 It is not a bank, not UPI, not a Razorpay clone, and not an authentication product.
 
-## What exists in Phase 1
+## Phase 1 — Foundation (implemented)
 
 - Spring Boot 3.5 / Java 21 / Maven
 - PostgreSQL schema owned by Flyway (`ddl-auto=validate`)
@@ -63,9 +65,17 @@ docker compose up -d postgres kafka
 .\mvnw.cmd spring-boot:run
 ```
 
-## What is not implemented yet
+## Phase 4 — Integrity and reconciliation
 
-Kafka consumers, notification side effects, reconciliation, reversals, and fault injection. Those are later phases.
+Detect-only. These APIs never move money, never write ledger/transfer/outbox rows, and never publish Kafka.
+
+`GET /internal/v1/integrity` (key `local-internal-key`) checks double-entry completeness, amounts, transfer/account currency, global debit==credit, and CUSTOMER cached vs ledger-derived balances. SYSTEM_FLOAT I5 is `INCONCLUSIVE` because the seed opening float has no opening CREDIT. Integrity is not persisted.
+
+`POST /internal/v1/settlements` records a simulated external settlement. `externalReference` is unique. Same fingerprint returns `200`; a different payload returns `409 SETTLEMENT_CONFLICT`. `transferId` may be null or unknown (no FK). Only `SETTLED` is accepted.
+
+`POST /internal/v1/reconciliation/runs` with `{ "from", "to" }` compares COMPLETED transfers (`completed_at`) to settlements (`settled_at`) on `[from, to)`. Match key is `transferId`. Statuses: `MATCHED`, `MISSING_EXTERNAL`, `MISSING_INTERNAL`, `AMOUNT_MISMATCH`, `CURRENCY_MISMATCH`, `DUPLICATE_EXTERNAL`. The run is committed `RUNNING` first, then `COMPLETED` or durable `FAILED`. `GET /internal/v1/reconciliation/runs/{runId}` returns the audit.
+
+This is not a real PSP integration, not automatic repair, and not a Kafka consumer.
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/transfers \
@@ -75,11 +85,21 @@ curl -X POST http://localhost:8080/api/v1/transfers \
   -d "{\"sourceAccountId\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\",\"destinationAccountId\":\"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\",\"amountMinor\":1000,\"currency\":\"INR\"}"
 ```
 
+Windows PowerShell 5.1 strips quotes from inline JSON passed to `curl.exe`. Write the body to a file without a UTF-8 BOM and send it with `--data-binary`:
+
+```powershell
+$json = '{"sourceAccountId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","destinationAccountId":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","amountMinor":1000,"currency":"INR"}'
+[System.IO.File]::WriteAllText("$env:TEMP\saakh-transfer.json", $json)
+curl.exe -i -X POST "http://localhost:8080/api/v1/transfers" -H "Content-Type: application/json" -H "X-API-Key: local-dev-key" -H "Idempotency-Key: demo-alice-bob-1" --data-binary "@$env:TEMP\saakh-transfer.json"
+```
+
 ## Demo accounts
 
-Seeded by Flyway. `SYSTEM_FLOAT` is **not** a real money-issuance system. It exists only so demo customer wallets have balanced double-entry history.
+Flyway V2 seed/demo state only. These balances are the values immediately after seed. They are not production data and are not a permanent runtime snapshot; later transfers change them.
 
-| Name | ID | Kind | Balance |
+`SYSTEM_FLOAT` is **not** a real money-issuance system. It exists only so demo customer wallets have balanced double-entry history.
+
+| Name | ID | Kind | Seed balance |
 |---|---|---|---|
 | SYSTEM_FLOAT | `00000000-0000-0000-0000-000000000001` | SYSTEM | 999,700,000 paise |
 | Alice Wallet | `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa` | CUSTOMER | 100,000 paise (₹1,000.00) |
@@ -87,6 +107,8 @@ Seeded by Flyway. `SYSTEM_FLOAT` is **not** a real money-issuance system. It exi
 | Charlie Wallet | `cccccccc-cccc-cccc-cccc-cccccccccccc` | CUSTOMER | 100,000 paise (₹1,000.00) |
 
 `SUM(available_balance_minor)` after seed = `1,000,000,000` paise.
+
+V2 also inserts already-published seed outbox rows. Those historical rows use event type `TransferPosted`. Live `POST /api/v1/transfers` inserts `TRANSFER_COMPLETED`. The publisher does not emit the seed rows because they already have `published_at`.
 
 ## Run locally
 
@@ -122,20 +144,24 @@ Local keys (not secrets): `local-dev-key` for `/v1/**` and `/api/**`, `local-int
 ./mvnw test
 ```
 
-`MoneyTest` and `RequestFingerprintTest` always run. `FoundationSchemaTest` and `TransferApiTest` use Testcontainers Postgres and disable the outbox poller (no Kafka). `OutboxPublisherTest` uses Testcontainers Postgres and Kafka.
+`MoneyTest`, `RequestFingerprintTest`, and `SettlementFingerprintTest` always run. `FoundationSchemaTest`, `TransferApiTest`, and Phase 4 tests use Testcontainers Postgres and disable the outbox poller (no Kafka). `OutboxPublisherTest` uses Testcontainers Postgres and Kafka.
 
-## SYSTEM GUARANTEES (target; not all enforced in Phase 1)
+## Implemented guarantees
+
+These are implemented in the current Phase 1–4 codebase. They are not future targets.
 
 | Guarantee | Mechanism |
 |---|---|
 | Duplicate request does not move money twice | Durable Postgres idempotency (Phase 2) |
 | Balance does not go negative | Transaction + `SELECT FOR UPDATE` (Phase 2) |
 | Every posted transfer is balanced | Double-entry ledger lines (Phase 2) |
-| Ledger history is immutable | Append-only `ledger_lines` |
+| Ledger history is append-only at the application path | `ledger_lines` inserts only; no update/delete in posting |
 | DB commit does not silently lose events | Outbox row in the posting transaction (Phase 2) |
 | Unpublished events reach Kafka | Poller + `SELECT FOR UPDATE SKIP LOCKED` (Phase 3, at-least-once) |
-| Duplicate event does not duplicate side effect | `notifications.event_id` UNIQUE (Phase 4) |
-| Balance drift is detectable | Detect-only reconciliation (Phase 5) |
+| Internal books can be checked | Read-only integrity (Phase 4) |
+| Settlement mismatches are detectable | Detect-only reconciliation (Phase 4) |
+
+Not implemented: consumer-side deduplication of a republished `eventId`. The V1 `notifications.event_id` UNIQUE column exists for a later phase and is unused.
 
 ## What this project does not claim
 
