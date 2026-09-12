@@ -2,8 +2,10 @@ package in.manmeet.apexledger.outbox;
 
 import in.manmeet.apexledger.api.TransferRequest;
 import in.manmeet.apexledger.api.TransferResponse;
+import in.manmeet.apexledger.observability.SaakhMetrics;
 import in.manmeet.apexledger.support.DemoAccounts;
 import in.manmeet.apexledger.transfer.TransferRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
@@ -66,6 +69,9 @@ class OutboxPublisherFailureTest {
     @Autowired
     TransferRepository transfers;
 
+    @Autowired
+    MeterRegistry meters;
+
     @MockBean
     KafkaEventPublisher kafkaEventPublisher;
 
@@ -85,7 +91,9 @@ class OutboxPublisherFailureTest {
         UUID eventId = unpublished(posted.transferId()).getEventId();
         doThrow(new IllegalStateException("kafka down")).when(kafkaEventPublisher).publish(any());
 
+        double failuresBefore = meter(SaakhMetrics.OUTBOX_PUBLISH_FAILURES);
         assertThrows(IllegalStateException.class, publisher::publishBatch);
+        assertTrue(meter(SaakhMetrics.OUTBOX_PUBLISH_FAILURES) >= failuresBefore + 1);
 
         OutboxEvent after = outboxEvents.findById(eventId).orElseThrow();
         assertNull(after.getPublishedAt());
@@ -166,5 +174,10 @@ class OutboxPublisherFailureTest {
 
     private static String newKey(String label) {
         return "p3-" + label + "-" + UUID.randomUUID();
+    }
+
+    private double meter(String name) {
+        var counter = meters.find(name).counter();
+        return counter == null ? 0.0 : counter.count();
     }
 }

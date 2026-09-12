@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import in.manmeet.apexledger.api.TransferRequest;
 import in.manmeet.apexledger.api.TransferResponse;
+import in.manmeet.apexledger.observability.SaakhMetrics;
 import in.manmeet.apexledger.support.DemoAccounts;
 import in.manmeet.apexledger.transfer.TransferRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -88,6 +90,9 @@ class OutboxPublisherTest {
     @Autowired
     TransferRepository transfers;
 
+    @Autowired
+    MeterRegistry meters;
+
     @Value("${spring.kafka.bootstrap-servers}")
     String bootstrapServers;
 
@@ -105,8 +110,11 @@ class OutboxPublisherTest {
         OutboxEvent unpublished = unpublishedFor(posted.transferId());
         assertNull(unpublished.getPublishedAt());
 
+        double publishedBefore = meters.find(SaakhMetrics.OUTBOX_PUBLISHED).counter() == null
+                ? 0.0 : meters.find(SaakhMetrics.OUTBOX_PUBLISHED).counter().count();
         int published = publisher.publishBatch();
         assertEquals(1, published);
+        assertTrue(meters.find(SaakhMetrics.OUTBOX_PUBLISHED).counter().count() >= publishedBefore + 1);
 
         OutboxEvent after = outboxEvents.findById(unpublished.getEventId()).orElseThrow();
         assertNotNull(after.getPublishedAt());

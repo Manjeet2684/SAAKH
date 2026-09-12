@@ -6,7 +6,7 @@ SAAKH is a correctness-focused financial transaction and reconciliation backend.
 
 It is built to preserve consistency under retries, duplicate requests, partial failures, and asynchronous event publication.
 
-**Phase 4 (current):** detect-only financial integrity and simulated settlement reconciliation. Kafka publishing is unchanged from Phase 3.
+**Phase 5 (current):** observability, diagnostics, and baseline API-key hardening on top of the Phase 1–4 correctness model. Kafka publishing is unchanged from Phase 3.
 
 It is not a bank, not UPI, not a Razorpay clone, and not an authentication product.
 
@@ -144,11 +144,24 @@ Local keys (not secrets): `local-dev-key` for `/v1/**` and `/api/**`, `local-int
 ./mvnw test
 ```
 
-`MoneyTest`, `RequestFingerprintTest`, and `SettlementFingerprintTest` always run. `FoundationSchemaTest`, `TransferApiTest`, and Phase 4 tests use Testcontainers Postgres and disable the outbox poller (no Kafka). `OutboxPublisherTest` uses Testcontainers Postgres and Kafka.
+`MoneyTest`, `RequestFingerprintTest`, `SettlementFingerprintTest`, and `ApiKeyEqualsTest` always run. `FoundationSchemaTest`, `TransferApiTest`, and Phase 4–5 API tests use Testcontainers Postgres and disable the outbox poller (no Kafka). `OutboxPublisherTest` uses Testcontainers Postgres and Kafka.
+
+## Phase 5 — Observability and baseline security
+
+Phase 5 does not move money and does not change TX A, TX B, the Kafka event schema, or detect-only reconciliation.
+
+- **Request correlation:** `X-Request-ID` is accepted when it matches `[A-Za-z0-9._-]` and is at most 128 characters. Otherwise the server generates a UUID. The effective ID is stored in MDC as `requestId`, returned on the response (including 401), and never written to Kafka, transfers, outbox, settlements, or reconciliation rows.
+- **Contextual application logging with MDC:** console logs include `[requestId]`. Transfer/settlement/recon/outbox/auth outcomes are logged without API keys, idempotency keys, `externalReference`, or full request bodies. Settlement logs use `settlementId` and outcome only.
+- **In-process Micrometer metrics:** low-cardinality counters/gauges for transfer completed/replayed/rejected, settlement created/replayed/conflict, outbox published/failures/pending, reconciliation completed/failed, and auth failures. `/actuator/metrics` is not exposed.
+- **Health:** `GET /actuator/health`, `/actuator/health/liveness` (process), `/actuator/health/readiness` (process + PostgreSQL). Kafka does **not** determine readiness. Health details are not shown.
+- **Safe errors:** unexpected exceptions return `500` `INTERNAL_ERROR` with a generic message and `requestId`. SQL and stack traces are not returned to clients.
+- **API keys:** two audiences remain (`local-dev-key` for `/v1` and `/api`, `local-internal-key` for `/internal`). Comparison is SHA-256 of UTF-8 bytes plus `MessageDigest.isEqual`. A blank configured key fails closed. Override with `SAAKH_SECURITY_API_KEY` and `SAAKH_SECURITY_INTERNAL_API_KEY`. These are local/demo values, not a secret-management platform.
+
+Phase 5 deliberately does **not** include Prometheus, Grafana, ELK, OpenTelemetry, OAuth, RBAC, Vault, Redis, Kubernetes, or a Kafka consumer.
 
 ## Implemented guarantees
 
-These are implemented in the current Phase 1–4 codebase. They are not future targets.
+These are implemented in the current Phase 1–5 codebase. They are not future targets. Phase 5 did not change this financial correctness model.
 
 | Guarantee | Mechanism |
 |---|---|
@@ -169,3 +182,4 @@ Not implemented: consumer-side deduplication of a republished `eventId`. The V1 
 - Not Kafka exactly-once semantics
 - Not globally distributed
 - Not production-ready for unlimited scale
+- Not an enterprise IAM, monitoring, or distributed-tracing platform

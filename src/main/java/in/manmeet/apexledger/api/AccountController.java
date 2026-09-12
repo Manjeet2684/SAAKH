@@ -30,7 +30,7 @@ public class AccountController {
         return accounts.findById(accountId)
                 .<ResponseEntity<?>>map(this::toResponse)
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
-                        .body(new ErrorResponse("ACCOUNT_NOT_FOUND", "No account with id " + accountId)));
+                        .body(ErrorResponse.of("ACCOUNT_NOT_FOUND", "No account with id " + accountId)));
     }
 
     private ResponseEntity<AccountResponse> toResponse(Account account) {

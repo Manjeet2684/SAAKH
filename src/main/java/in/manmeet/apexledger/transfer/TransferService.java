@@ -12,11 +12,14 @@ import in.manmeet.apexledger.idempotency.IdempotencyKeyRepository;
 import in.manmeet.apexledger.ledger.LedgerDirection;
 import in.manmeet.apexledger.ledger.LedgerLine;
 import in.manmeet.apexledger.ledger.LedgerLineRepository;
+import in.manmeet.apexledger.observability.SaakhMetrics;
 import in.manmeet.apexledger.outbox.OutboxEvent;
 import in.manmeet.apexledger.outbox.OutboxEventRepository;
 import in.manmeet.apexledger.support.Money;
 import in.manmeet.apexledger.support.RequestFingerprint;
 import jakarta.persistence.EntityManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -37,6 +40,8 @@ import java.util.UUID;
 @Service
 public class TransferService {
 
+    private static final Logger log = LoggerFactory.getLogger(TransferService.class);
+
     private final TransactionTemplate transactions;
     private final EntityManager entityManager;
     private final AccountRepository accounts;
@@ -45,6 +50,7 @@ public class TransferService {
     private final IdempotencyKeyRepository idempotencyKeys;
     private final OutboxEventRepository outboxEvents;
     private final ObjectMapper objectMapper;
+    private final SaakhMetrics metrics;
 
     public TransferService(
             TransactionTemplate transactions,
@@ -54,7 +60,8 @@ public class TransferService {
             LedgerLineRepository ledgerLines,
             IdempotencyKeyRepository idempotencyKeys,
             OutboxEventRepository outboxEvents,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            SaakhMetrics metrics
     ) {
         this.transactions = transactions;
         this.entityManager = entityManager;
@@ -64,9 +71,28 @@ public class TransferService {
         this.idempotencyKeys = idempotencyKeys;
         this.outboxEvents = outboxEvents;
         this.objectMapper = objectMapper;
+        this.metrics = metrics;
     }
 
     public TransferResponse post(String idempotencyKey, TransferRequest request) {
+        try {
+            TransferOutcome outcome = postOutcome(idempotencyKey, request);
+            if (outcome.replayed()) {
+                metrics.transferReplayed();
+                log.info("Transfer replayed transferId={}", outcome.body().transferId());
+            } else {
+                metrics.transferCompleted();
+                log.info("Transfer completed transferId={}", outcome.body().transferId());
+            }
+            return outcome.body();
+        } catch (ApiException ex) {
+            metrics.transferRejected(ex.getCode());
+            log.info("Transfer rejected code={}", ex.getCode());
+            throw ex;
+        }
+    }
+
+    private TransferOutcome postOutcome(String idempotencyKey, TransferRequest request) {
         validateHeader(idempotencyKey);
         String currency = request.currency().toUpperCase();
         if (!Money.CURRENCY_INR.equals(currency)) {
@@ -92,14 +118,14 @@ public class TransferService {
             if (!isUniqueViolation(ex)) {
                 throw ex;
             }
-            return replay(idempotencyKey, requestHash);
+            return new TransferOutcome(replay(idempotencyKey, requestHash), true);
         }
     }
 
-    private TransferResponse executeNew(String idempotencyKey, String requestHash, TransferRequest request, String currency) {
+    private TransferOutcome executeNew(String idempotencyKey, String requestHash, TransferRequest request, String currency) {
         IdempotencyKey existing = idempotencyKeys.findById(idempotencyKey).orElse(null);
         if (existing != null) {
-            return replayRow(existing, requestHash);
+            return new TransferOutcome(replayRow(existing, requestHash), true);
         }
 
         Instant now = Instant.now();
@@ -150,8 +176,10 @@ public class TransferService {
                 now
         ));
         entityManager.flush();
-        return body;
+        return new TransferOutcome(body, false);
     }
+
+    record TransferOutcome(TransferResponse body, boolean replayed) {}
 
     private TransferResponse replay(String idempotencyKey, String requestHash) {
         IdempotencyKey row = idempotencyKeys.findById(idempotencyKey)

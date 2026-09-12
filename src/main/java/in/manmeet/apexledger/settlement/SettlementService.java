@@ -3,7 +3,10 @@ package in.manmeet.apexledger.settlement;
 import in.manmeet.apexledger.api.ApiException;
 import in.manmeet.apexledger.api.SettlementRequest;
 import in.manmeet.apexledger.api.SettlementResponse;
+import in.manmeet.apexledger.observability.SaakhMetrics;
 import in.manmeet.apexledger.support.SettlementFingerprint;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -14,15 +17,43 @@ import java.util.UUID;
 @Service
 public class SettlementService {
 
+    private static final Logger log = LoggerFactory.getLogger(SettlementService.class);
+
     private final TransactionTemplate transactions;
     private final SettlementRecordRepository settlements;
+    private final SaakhMetrics metrics;
 
-    public SettlementService(TransactionTemplate transactions, SettlementRecordRepository settlements) {
+    public SettlementService(
+            TransactionTemplate transactions,
+            SettlementRecordRepository settlements,
+            SaakhMetrics metrics
+    ) {
         this.transactions = transactions;
         this.settlements = settlements;
+        this.metrics = metrics;
     }
 
     public SettlementIngestResult ingest(SettlementRequest request) {
+        try {
+            SettlementIngestResult result = ingestOutcome(request);
+            if (result.created()) {
+                metrics.settlementCreated();
+                log.info("Settlement created settlementId={}", result.body().id());
+            } else {
+                metrics.settlementReplayed();
+                log.info("Settlement replayed settlementId={}", result.body().id());
+            }
+            return result;
+        } catch (ApiException ex) {
+            if ("SETTLEMENT_CONFLICT".equals(ex.getCode())) {
+                metrics.settlementConflict();
+                log.info("Settlement conflict outcome=conflict");
+            }
+            throw ex;
+        }
+    }
+
+    private SettlementIngestResult ingestOutcome(SettlementRequest request) {
         if (!SettlementStatus.SETTLED.name().equalsIgnoreCase(request.settlementStatus().trim())) {
             throw ApiException.unprocessable("UNSUPPORTED_SETTLEMENT_STATUS", "Only SETTLED is supported");
         }

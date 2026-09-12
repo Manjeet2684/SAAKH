@@ -5,9 +5,12 @@ import in.manmeet.apexledger.api.ReconciliationResultResponse;
 import in.manmeet.apexledger.api.ReconciliationRunResponse;
 import in.manmeet.apexledger.settlement.SettlementRecord;
 import in.manmeet.apexledger.settlement.SettlementRecordRepository;
+import in.manmeet.apexledger.observability.SaakhMetrics;
 import in.manmeet.apexledger.transfer.Transfer;
 import in.manmeet.apexledger.transfer.TransferRepository;
 import in.manmeet.apexledger.transfer.TransferStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -23,24 +26,29 @@ import java.util.stream.Collectors;
 @Service
 public class ReconciliationService {
 
+    private static final Logger log = LoggerFactory.getLogger(ReconciliationService.class);
+
     private final TransactionTemplate transactions;
     private final ReconciliationRunRepository runs;
     private final ReconciliationResultRepository results;
     private final TransferRepository transfers;
     private final SettlementRecordRepository settlements;
+    private final SaakhMetrics metrics;
 
     public ReconciliationService(
             TransactionTemplate transactions,
             ReconciliationRunRepository runs,
             ReconciliationResultRepository results,
             TransferRepository transfers,
-            SettlementRecordRepository settlements
+            SettlementRecordRepository settlements,
+            SaakhMetrics metrics
     ) {
         this.transactions = transactions;
         this.runs = runs;
         this.results = results;
         this.transfers = transfers;
         this.settlements = settlements;
+        this.metrics = metrics;
     }
 
     public ReconciliationRunResponse create(Instant from, Instant to) {
@@ -50,14 +58,21 @@ public class ReconciliationService {
         UUID runId = UUID.randomUUID();
         transactions.executeWithoutResult(status ->
                 runs.save(ReconciliationRun.running(runId, from, to, Instant.now())));
+        log.info("Reconciliation run started runId={} status=RUNNING", runId);
         try {
-            return transactions.execute(status -> classify(runId, from, to));
+            ReconciliationRunResponse completed = transactions.execute(status -> classify(runId, from, to));
+            metrics.reconciliationCompleted();
+            log.info("Reconciliation run completed runId={} status={} exceptionCount={}",
+                    runId, completed.status(), completed.exceptionCount());
+            return completed;
         } catch (RuntimeException ex) {
             transactions.executeWithoutResult(status -> {
                 ReconciliationRun run = runs.findById(runId).orElseThrow();
                 run.markFailed(Instant.now());
                 runs.save(run);
             });
+            metrics.reconciliationFailed();
+            log.info("Reconciliation run failed runId={} status=FAILED", runId);
             throw ex;
         }
     }
