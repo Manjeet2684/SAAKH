@@ -88,6 +88,8 @@ Maven `artifactId` and the Compose database name remain `apexledger` (internal i
 
 PostgreSQL is the source of truth. Kafka is an after-commit outbox sink, not a second ledger.
 
+![SAAKH system architecture: client, Spring Boot transfer API, PostgreSQL TX A, Kafka outbox TX B, detect-only reconciliation](docs/images/saakh-architecture.jpg)
+
 ```mermaid
 flowchart LR
   Client[Client] -->|HTTP| App[Spring Boot monolith]
@@ -126,6 +128,12 @@ sequenceDiagram
 ```
 
 If Kafka acks and the process crashes before `published_at` commits, TX B may publish the same `eventId` again. That is at-least-once delivery. The publisher transaction stays open during Kafka I/O on purpose (no lease columns). `scheduledPoll()` calls `publishBatch()` on the Spring bean so `@Transactional` actually commits.
+
+## Transaction correctness and implementation
+
+`TransferService` posts a transfer in one PostgreSQL transaction (`TransactionTemplate`): idempotency replay, ordered account locks, debit/credit, transfer row, double-entry ledger, unpublished outbox, then the idempotency row. Kafka is not called in this method.
+
+![Transfer posting path in TransferService: concurrency and idempotency; ledger and transactional outbox](docs/images/saakh-transfer-implementation.png)
 
 ## Reconciliation flow
 
@@ -262,6 +270,12 @@ Headers: client routes (`/v1/**`, `/api/**`) use `X-API-Key: local-dev-key`. Int
 ## Testing
 
 **47** `@Test` methods. No coverage percentage is published.
+
+## Test verification
+
+Maven Surefire on the current suite. Integration tests use Testcontainers and are skipped if Docker is not available.
+
+![Maven test run summary for the SAAKH suite](docs/images/saakh-test-verification.png)
 
 | Class | Tests | What it exercises |
 |---|---|---|
